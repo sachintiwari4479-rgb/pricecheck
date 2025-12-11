@@ -3,12 +3,16 @@ import requests
 import json
 import warnings
 import pandas as pd
+import os
 from pandas.errors import SettingWithCopyWarning
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # --- CONFIGURATION & WARNING SUPPRESSION ---
 warnings.simplefilter('ignore', InsecureRequestWarning)
 warnings.filterwarnings("ignore", category=SettingWithCopyWarning)
+
+# --- CONSTANTS ---
+DEALS_FILE = "jiomart_hot_deals.csv"
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -63,14 +67,73 @@ st.markdown("""
         border-radius: 8px;
         text-align: center;
     }
+    /* Load More Button Styling */
+    .stButton>button {
+        width: 100%;
+        border-radius: 8px;
+        height: 3em;
+    }
     </style>
 """, unsafe_allow_html=True)
+
+# --- HELPER FUNCTIONS FOR AUTO-SAVE ---
+def load_saved_deals():
+    if os.path.exists(DEALS_FILE):
+        return pd.read_csv(DEALS_FILE)
+    return pd.DataFrame(columns=["Title", "Selling_Price", "MRP", "Discount_Percent", "Store_ID", "Reference_Label", "Date_Added"])
+
+def save_deals_to_csv(new_deals):
+    if not new_deals:
+        return 0
+    
+    # Load existing to check for duplicates
+    existing_df = load_saved_deals()
+    new_df = pd.DataFrame(new_deals)
+    new_df['Date_Added'] = pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')
+
+    if not existing_df.empty:
+        # Filter out duplicates based on Title and Selling Price
+        # (Assuming same title + same price = same deal)
+        existing_keys = set(zip(existing_df["Title"], existing_df["Selling_Price"]))
+        new_df = new_df[~new_df.apply(lambda x: (x["Title"], x["Selling_Price"]) in existing_keys, axis=1)]
+
+    if not new_df.empty:
+        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+        updated_df.to_csv(DEALS_FILE, index=False)
+        return len(new_df)
+    return 0
 
 # --- APP HEADER ---
 st.title("🛒 JioMart Price Analyzer")
 st.markdown("Search for products and find the **best rates**, **discounts**, and **hidden deals**.")
 
-# --- SIDEBAR / INPUT ---
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("📂 Saved Deals")
+    st.info("Products with >40% discount are auto-saved here.")
+    
+    if st.button("View Saved List"):
+        df_saved = load_saved_deals()
+        if not df_saved.empty:
+            st.dataframe(df_saved, hide_index=True)
+            # Download Button
+            csv = df_saved.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Download CSV",
+                csv,
+                "jiomart_hot_deals.csv",
+                "text/csv",
+                key='download-csv'
+            )
+            if st.button("Clear Saved List"):
+                if os.path.exists(DEALS_FILE):
+                    os.remove(DEALS_FILE)
+                    st.success("List cleared!")
+                    st.rerun()
+        else:
+            st.warning("No deals saved yet.")
+
+# --- MAIN INPUT ---
 with st.container():
     col1, col2 = st.columns([3, 1])
     with col1:
@@ -108,26 +171,46 @@ def analyze_product_variants(buybox_mrp_lines):
 
         # Analysis
         best_rate = df_prices.loc[df_prices['Selling_Price'].idxmin()]
-        top_3 = df_prices.sort_values(by='Selling_Price').drop_duplicates(subset=['Selling_Price']).head(3)
+        # Sort unique selling prices ascending (Lowest to Highest)
+        top_prices = df_prices.sort_values(by='Selling_Price').drop_duplicates(subset=['Selling_Price'])
+        
+        # Determine Reference Price (Prioritize 3rd lowest, then 2nd lowest)
+        reference_price = 0
+        ref_label = ""
+        valid_comparison = False
 
-        # 3rd Best Comparison
-        comparison_data = {}
-        if len(top_3) >= 3:
-            third_best = top_3.iloc[2]['Selling_Price']
-            best = best_rate['Selling_Price']
-            diff = third_best - best
-            pct_less = (diff / third_best * 100) if third_best > 0 else 0
-            comparison_data = {
-                "valid": True,
-                "third_price": third_best,
-                "pct_less": pct_less
-            }
+        if len(top_prices) >= 3:
+            reference_price = top_prices.iloc[2]['Selling_Price'] # 3rd Lowest
+            ref_label = "vs 3rd Best"
+            valid_comparison = True
+        elif len(top_prices) == 2:
+            reference_price = top_prices.iloc[1]['Selling_Price'] # 2nd Lowest
+            ref_label = "vs 2nd Best"
+            valid_comparison = True
         else:
-            comparison_data = {"valid": False}
+            # Only 1 unique price available, no comparison possible against other sellers
+            reference_price = best_rate['Selling_Price']
+            ref_label = "Best Price"
+            valid_comparison = False
+        
+        # Calculate Discount based on Reference Price (NOT MRP)
+        best_price = best_rate['Selling_Price']
+        diff = reference_price - best_price
+        
+        pct_less = 0.0
+        if valid_comparison and reference_price > 0:
+            pct_less = (diff / reference_price * 100)
+            
+        comparison_data = {
+            "valid": valid_comparison,
+            "ref_price": reference_price,
+            "ref_label": ref_label,
+            "pct_less": pct_less
+        }
 
         return {
             "best": best_rate,
-            "top_3": top_3,
+            "top_3": top_prices.head(3),
             "comparison": comparison_data
         }
 
@@ -151,10 +234,22 @@ if search_clicked and query:
                 "Referer": f"https://www.jiomart.com/search?q={query}",
                 "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8,hi;q=0.7",
                 "Cache-Control": "no-cache",
+                # NOTE: Cookies expire. If the script stops working, update this string.
                 "Cookie": "ajs_anonymous_id=6f8e1a0f-6c90-439f-918f-003969e5fe4a; _ga_F1NJ1E2HJ2=GS2.1.s1751013819$o1$g1$t1751013834$j45$l0$h0; _gcl_au=1.1.1033579185.1764401199; _ALGOLIA=anonymous-90064b63-ef63-45e4-842b-d6c4a9d03047; new_customer=false; WZRK_G=ffb84e9eec5d4ad69e4d18473fd1d87e; nms_mgo_state_code=RJ; _gid=GA1.2.1806390998.1765188925; nms_mgo_city=Jodhpur; nms_mgo_pincode=342003; _ga=GA1.1.1362582137.1751012504; AKA_A2=A; RT=\"z=1&dm=www.jiomart.com&si=8dddc3d9-4195-40f7-8c8a-37b94d74d8e1&ss=miyuco88&sl=1&tt=1lr&rl=1\"; __tr_luptv=1765300564122; WZRK_S_88R-W4Z-495Z=%7B%22s%22%3A1765299718%2C%22t%22%3A1765300612%2C%22p%22%3A7%7D; _ga_XHR9Q2M3VV=GS2.1.s1765299723$o37$g1$t1765300612$j57$l1$h1151985791"
             }
 
-            payload = {"query":query,"pageSize":50,"visitorId":"anonymous-6465068b-fd56-4e0e-8cba-cc31da8dbe7f","filter":"attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))","canonicalFilter":"attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))","searchMode":"PRODUCT_SEARCH_ONLY","branch":"projects/sr-project-jiomart-jfront-prod/locations/global/catalogs/default_catalog/branches/0","userInfo":{"userId":"9085981DD77759FDB8984C4EBF9A14B02DC30F7B9D15776719EF587A723C3E24"},"spellCorrectionSpec":{"mode":"AUTO"},"queryExpansionSpec":{"condition":"AUTO","pinUnexpandedResults":true}}
+            payload = {
+                "query": query,
+                "pageSize": 50,
+                "visitorId": "anonymous-6465068b-fd56-4e0e-8cba-cc31da8dbe7f",
+                "filter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
+                "canonicalFilter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
+                "searchMode": "PRODUCT_SEARCH_ONLY",
+                "branch": "projects/sr-project-jiomart-jfront-prod/locations/global/catalogs/default_catalog/branches/0",
+                "userInfo": {"userId": "9085981DD77759FDB8984C4EBF9A14B02DC30F7B9D15776719EF587A723C3E24"},
+                "spellCorrectionSpec": {"mode": "AUTO"},
+                "queryExpansionSpec": {"condition": "AUTO", "pinUnexpandedResults": True} # FIXED: true -> True
+            }
 
             response = requests.post(url, headers=headers, json=payload, verify=False)
             response.raise_for_status()
@@ -164,89 +259,96 @@ if search_clicked and query:
             if not results:
                 st.warning(f"No results found for '{query}'.")
             else:
-                st.success(f"Found {len(results)} products.")
+                st.success(f"Found {len(results)} products (Showing Top 50).")
 
+                # --- LAYOUT: 2 PRODUCTS PER ROW ---
+                cols = st.columns(2) 
+                
+                # List to collect Hot Deals for auto-saving
+                hot_deals_to_save = []
+                
                 for i, result in enumerate(results):
                     product = result.get('product', {})
                     title = product.get('title', 'Unknown Product')
-                    buybox_text = product.get('variants', [{}])[0].get('attributes', {}).get('buybox_mrp', {}).get(
-                        'text')
+                    
+                    # Try to fetch image if available (fallback to placeholder)
+                    image_url = product.get('images', [{}])[0].get('url', '') 
+                    if not image_url:
+                         image_url = "https://www.jiomart.com/assets/ds2web/jds-icons/jiomart-logo.svg"
+
+                    buybox_text = product.get('variants', [{}])[0].get('attributes', {}).get('buybox_mrp', {}).get('text')
 
                     if buybox_text:
                         analysis = analyze_product_variants(buybox_text)
 
                         if analysis:
                             best = analysis['best']
+                            comp = analysis['comparison']
 
-                            # LOGIC UPDATE: Determine which discount to use
-                            # If we have 3rd best comparison data, use THAT as the primary discount for logic/display.
-                            # Otherwise, fallback to the standard MRP discount.
-                            if analysis['comparison']['valid']:
-                                discount_pct = analysis['comparison']['pct_less']
-                                discount_label = "vs 3rd Best"
-                            else:
-                                discount_pct = best['Discount_Percent']
-                                discount_label = "Discount"
+                            # LOGIC: Strictly use the calculated pct_less for badge and metrics
+                            discount_pct = comp['pct_less']
+                            discount_label = comp['ref_label'] if comp['valid'] else "Discount (N/A)"
 
                             is_hot_deal = discount_pct > 40
+                            
+                            # --- AUTO SAVE LOGIC ---
+                            if is_hot_deal:
+                                hot_deals_to_save.append({
+                                    "Title": title,
+                                    "Selling_Price": best["Selling_Price"],
+                                    "MRP": best["MRP"],
+                                    "Discount_Percent": discount_pct,
+                                    "Store_ID": best["Store_ID"],
+                                    "Reference_Label": discount_label
+                                })
 
                             # --- RENDER CARD ---
-                            # Determine class based on discount
                             card_class = "hot-deal-card" if is_hot_deal else "product-card"
+                            
+                            # Use alternating columns for grid layout
+                            with cols[i % 2]:
+                                with st.container():
+                                    st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
 
-                            with st.container():
-                                # Open Card HTML wrapper
-                                st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
-
-                                # Header
-                                col_head, col_badge = st.columns([4, 1])
-                                with col_head:
-                                    st.markdown(f"### {i + 1}. {title}")
-                                with col_badge:
+                                    # Title & Badge
+                                    st.markdown(f"<h5>{i + 1}. {title}</h5>", unsafe_allow_html=True)
                                     if is_hot_deal:
-                                        # Show the calculated discount in the badge
-                                        st.markdown(f'<span class="deal-badge">🔥 {discount_pct:.1f}% OFF</span>',
-                                                    unsafe_allow_html=True)
+                                        st.markdown(f'<span class="deal-badge">🔥 {discount_pct:.1f}% OFF</span>', unsafe_allow_html=True)
 
-                                # Main Metrics
-                                m_col1, m_col2, m_col3 = st.columns(3)
-                                with m_col1:
-                                    st.markdown(
-                                        f'<div class="metric-box"><div class="price-mrp">MRP ₹{best["MRP"]:.2f}</div><div class="price-main">₹{best["Selling_Price"]:.2f}</div></div>',
-                                        unsafe_allow_html=True)
-                                with m_col2:
-                                    # Show the appropriate discount label
-                                    st.metric(discount_label, f"{discount_pct:.1f}%")
-                                with m_col3:
-                                    st.metric("Store ID", str(best["Store_ID"]))
+                                    # Metrics
+                                    m1, m2 = st.columns(2)
+                                    with m1:
+                                        st.markdown(
+                                            f'<div class="metric-box"><div class="price-mrp">MRP ₹{best["MRP"]:.2f}</div><div class="price-main">₹{best["Selling_Price"]:.2f}</div></div>',
+                                            unsafe_allow_html=True)
+                                    with m2:
+                                        st.metric(discount_label, f"{discount_pct:.1f}%")
+                                        st.caption(f"Store: {best['Store_ID']}")
 
-                                # Comparison Text / Value Insight
-                                # If we are already showing the "vs 3rd Best" in the main metric,
-                                # we can show the MRP discount here for context.
-                                if analysis['comparison']['valid']:
-                                    comp = analysis['comparison']
-                                    st.info(
-                                        f"📉 **Value Insight:** Calculated against 3rd best price (₹{comp['third_price']:.2f}). (Standard MRP Discount is {best['Discount_Percent']}%)")
-                                else:
-                                    # If only MRP discount is available
-                                    st.info(f"ℹ️ **Info:** Standard discount calculated from MRP.")
+                                    # Insight
+                                    if comp['valid']:
+                                        st.info(f"Save **{comp['pct_less']:.1f}%** compared to the {comp['ref_label']} (₹{comp['ref_price']:.2f}).")
+                                    else:
+                                        st.info("Comparison: Only 1 seller available (0% discount relative to others).")
 
-                                # Data Table (Top 3)
-                                with st.expander("See Top 3 Price Options"):
-                                    st.dataframe(
-                                        analysis['top_3'][['Selling_Price', 'MRP', 'Discount_Percent', 'Store_ID']],
-                                        hide_index=True,
-                                        use_container_width=True
-                                    )
+                                    # Expandable Data
+                                    with st.expander("Compare Prices"):
+                                        st.dataframe(
+                                            analysis['top_3'][['Selling_Price', 'MRP', 'Discount_Percent', 'Store_ID']],
+                                            hide_index=True,
+                                            use_container_width=True
+                                        )
 
-                                # Close Card HTML wrapper
-                                st.markdown('</div>', unsafe_allow_html=True)
+                                    st.markdown('</div>', unsafe_allow_html=True)
+                
+                # --- PROCESS AUTO SAVE ---
+                if hot_deals_to_save:
+                    saved_count = save_deals_to_csv(hot_deals_to_save)
+                    if saved_count > 0:
+                        st.toast(f"✅ Auto-saved {saved_count} new hot deals to Saved List!", icon="💾")
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
 
 elif search_clicked and not query:
-
     st.warning("Please enter a product name to search.")
-
-
