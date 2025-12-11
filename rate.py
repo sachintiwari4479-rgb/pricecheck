@@ -188,7 +188,7 @@ if search_clicked and query:
                                 discount_pct = best['Discount_Percent']
                                 discount_label = "Discount"
 
-                            is_hot_deal = discount_pct > 30
+                            is_hot_deal = discount_pct > 40
 
                             # --- RENDER CARD ---
                             # Determine class based on discount
@@ -248,4 +248,5 @@ if search_clicked and query:
 elif search_clicked and not query:
 
     st.warning("Please enter a product name to search.")
+
 
