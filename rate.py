@@ -13,6 +13,7 @@ warnings.filterwarnings("ignore", category=SettingWithCopyWarning)
 
 # --- CONSTANTS ---
 DEALS_FILE = "jiomart_hot_deals.csv"
+STORE_IDS_FILE = "store_ids.txt"
 # BASE_URL fallback if direct URI is missing
 BASE_URL = "https://www.jiomart.com/"
 
@@ -104,7 +105,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- HELPER FUNCTIONS FOR AUTO-SAVE ---
+# --- HELPER FUNCTIONS ---
+
+def load_store_pincodes():
+    """
+    Loads store_ids.txt and returns a dictionary mapping Store_ID -> Pincode.
+    Expected file format: Pincode:Store_ID (e.g., 629160:U3QS)
+    """
+    store_map = {}
+    if os.path.exists(STORE_IDS_FILE):
+        try:
+            with open(STORE_IDS_FILE, "r") as f:
+                for line in f:
+                    if ":" in line:
+                        parts = line.strip().split(":")
+                        if len(parts) >= 2:
+                            pincode = parts[0].strip()
+                            store_id = parts[1].strip()
+                            # Map Store ID to Pincode
+                            store_map[store_id] = pincode
+        except Exception as e:
+            st.sidebar.warning(f"Error reading store_ids.txt: {e}")
+    return store_map
+
+
 def load_saved_deals():
     if os.path.exists(DEALS_FILE):
         return pd.read_csv(DEALS_FILE)
@@ -275,6 +299,12 @@ def analyze_product_variants(buybox_mrp_lines):
 
 # --- MAIN SEARCH LOGIC ---
 if search_clicked and query:
+    # 1. Load the store ID map
+    store_pincode_map = load_store_pincodes()
+    if not store_pincode_map:
+        if os.path.exists(STORE_IDS_FILE):
+            st.info(f"Loaded store map, but it appears empty. Check formatting in {STORE_IDS_FILE}")
+
     with st.spinner(f"Searching JioMart for '{query}'..."):
         try:
             url = "https://www.jiomart.com/trex/autoSearch"
@@ -294,18 +324,24 @@ if search_clicked and query:
             }
 
             payload = {
-                "query": query,
+                "query": "ghee",
                 "pageSize": 50,
                 "visitorId": "anonymous-6465068b-fd56-4e0e-8cba-cc31da8dbe7f",
-                "filter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
-                "canonicalFilter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
+                "filter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"TW11\", \"FRER\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"U253\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\", \"T9U1\", \"SANR\", \"SANS\", \"SURR\", \"SANQ\", \"S4LI\", \"S535\", \"R300\", \"SLI1\", \"S2CP\", \"TG1K\", \"S2CN\", \"S2CO\", \"SLE4\", \"S3IR\", \"T4QF\", \"S0XN\", \"SZBL\", \"Y524\", \"SJ14\", \"V012\", \"R975\", \"S402\", \"V017\", \"S2DT\", \"SB41\", \"SLTP\", \"SL7Q\", \"SH09\", \"V027\", \"S3KG\", \"500\", \"490\", \"TM9A\", \"T6TA\", \"T2WP\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"3PIUIKXJFC03\", \"3PN7R6YAFC03\", \"3PZAHMOKFC06\", \"3PXKYDA0FC02\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
+                "canonicalFilter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"TW11\", \"FRER\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"U253\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\", \"T9U1\", \"SANR\", \"SANS\", \"SURR\", \"SANQ\", \"S4LI\", \"S535\", \"R300\", \"SLI1\", \"S2CP\", \"TG1K\", \"S2CN\", \"S2CO\", \"SLE4\", \"S3IR\", \"T4QF\", \"S0XN\", \"SZBL\", \"Y524\", \"SJ14\", \"V012\", \"R975\", \"S402\", \"V017\", \"S2DT\", \"SB41\", \"SLTP\", \"SL7Q\", \"SH09\", \"V027\", \"S3KG\", \"500\", \"490\", \"TM9A\", \"T6TA\", \"T2WP\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"3PIUIKXJFC03\", \"3PN7R6YAFC03\", \"3PZAHMOKFC06\", \"3PXKYDA0FC02\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
                 "searchMode": "PRODUCT_SEARCH_ONLY",
                 "branch": "projects/sr-project-jiomart-jfront-prod/locations/global/catalogs/default_catalog/branches/0",
-                "userInfo": {"userId": "9085981DD77759FDB8984C4EBF9A14B02DC30F7B9D15776719EF587A723C3E24"},
-                "spellCorrectionSpec": {"mode": "AUTO"},
-                "queryExpansionSpec": {"condition": "AUTO", "pinUnexpandedResults": True}
+                "userInfo": {
+                    "userId": "9085981DD77759FDB8984C4EBF9A14B02DC30F7B9D15776719EF587A723C3E24"
+                },
+                "spellCorrectionSpec": {
+                    "mode": "AUTO"
+                },
+                "queryExpansionSpec": {
+                    "condition": "AUTO",
+                    "pinUnexpandedResults": True
+                }
             }
-
             response = requests.post(url, headers=headers, json=payload, verify=False)
             response.raise_for_status()
             data = response.json()
@@ -382,6 +418,10 @@ if search_clicked and query:
                             best = analysis['best']
                             comp = analysis['comparison']
 
+                            # Get Pincode for Store
+                            store_id_str = str(best['Store_ID']).strip()
+                            pincode_found = store_pincode_map.get(store_id_str, "No pin found")
+
                             # LOGIC: Strictly use the calculated pct_less for badge and metrics
                             discount_pct = comp['pct_less']
                             discount_label = comp['ref_label'] if comp['valid'] else "Discount (N/A)"
@@ -426,6 +466,11 @@ if search_clicked and query:
                                     with m2:
                                         st.metric(discount_label, f"{discount_pct:.1f}%")
                                         st.caption(f"Store: {best['Store_ID']}")
+                                        # Show pincode or 'No pin found'
+                                        if pincode_found != "No pin found":
+                                            st.caption(f"📍 Pin: {pincode_found}")
+                                        else:
+                                            st.caption(f"📍 {pincode_found}")
 
                                     # Insight
                                     if comp['valid']:
