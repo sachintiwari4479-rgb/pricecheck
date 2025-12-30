@@ -324,7 +324,7 @@ if search_clicked and query:
             }
 
             payload = {
-                "query": "ghee",
+                "query": query,
                 "pageSize": 50,
                 "visitorId": "anonymous-6465068b-fd56-4e0e-8cba-cc31da8dbe7f",
                 "filter": "attributes.status:ANY(\"active\") AND (attributes.mart_availability:ANY(\"JIO\", \"JIO_WA\")) AND (attributes.available_regions:ANY(\"PANINDIABOOKS\", \"PANINDIACRAFT\", \"PANINDIADIGITAL\", \"PANINDIAFASHION\", \"PANINDIAFURNITURE\", \"TH91\", \"TW11\", \"FRER\", \"PANINDIAGROCERIES\", \"PANINDIAHOMEANDKITCHEN\", \"PANINDIAHOMEIMPROVEMENT\", \"PANINDIAJEWEL\", \"PANINDIALOCALSHOPS\", \"PANINDIASTL\", \"PANINDIAWELLNESS\")) AND ((attributes.inv_stores_1p:ANY(\"ALL\", \"U3FP\", \"U253\", \"VLOR\", \"254\", \"N892\", \"60\", \"270\", \"SF11\", \"SF40\", \"SX9A\", \"SC28\", \"SK1M\", \"R810\", \"SZ9U\", \"R696\", \"SJ93\", \"R396\", \"SE40\", \"S3TP\", \"SLKO\", \"R406\", \"T9U1\", \"SANR\", \"SANS\", \"SURR\", \"SANQ\", \"S4LI\", \"S535\", \"R300\", \"SLI1\", \"S2CP\", \"TG1K\", \"S2CN\", \"S2CO\", \"SLE4\", \"S3IR\", \"T4QF\", \"S0XN\", \"SZBL\", \"Y524\", \"SJ14\", \"V012\", \"R975\", \"S402\", \"V017\", \"S2DT\", \"SB41\", \"SLTP\", \"SL7Q\", \"SH09\", \"V027\", \"S3KG\", \"500\", \"490\", \"TM9A\", \"T6TA\", \"T2WP\") OR attributes.inv_stores_3p:ANY(\"ALL\", \"3PQXWBTGFC02\", \"3PS0T7LTFC06\", \"3PKXPHZAFC02\", \"3PQZUIDAFC02\", \"3PUSUYR4FC03\", \"3P7IYTP8FC04\", \"3PPKDT3ONFC26\", \"3P87THZUFC02\", \"3P0YYXK1FC01\", \"3PMXGPK6FC02\", \"3PPJ4O5I8FC07\", \"3PCGEVZFFC03\", \"3PT79I5BFC02\", \"3PMBAR4CFC04\", \"3PIUIKXJFC03\", \"3PN7R6YAFC03\", \"3PZAHMOKFC06\", \"3PXKYDA0FC02\", \"groceries_zone_non-essential_services\", \"general_zone\", \"groceries_zone_essential_services\", \"fashion_zone\", \"electronics_zone\"))) AND ( NOT attributes.vertical_code:ANY(\"ALCOHOL\"))",
@@ -505,3 +505,4 @@ if search_clicked and query:
 
 elif search_clicked and not query:
     st.warning("Please enter a product name to search.")
+
