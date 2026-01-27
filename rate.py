@@ -15,7 +15,8 @@ BASE_HEADERS = {
     "app-version": "1.0.0",
     "content-type": "application/json",
     "accept-encoding": "gzip",
-    "user-agent": "okhttp/4.12.0"
+    "user-agent": "okhttp/4.12.0",
+    "cache-control": "no-cache"
 }
 
 # --- API Functions ---
@@ -54,7 +55,16 @@ def get_assigned_trip(access_token, refresh_token):
         return None
 
 def get_shipment_details(trip_id, shipment_id, access_token, refresh_token):
-    url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}/{shipment_id}"
+    """
+    Fetches shipment details. 
+    If shipment_id is None, it tries to fetch ALL shipments for the trip (if API supports it).
+    """
+    if shipment_id:
+        url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}/{shipment_id}"
+    else:
+        # Try fetching full trip details without specific shipment ID
+        url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}"
+        
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
     headers["authorization-refresh"] = refresh_token
@@ -82,7 +92,6 @@ def mark_arrived_api(shipment_id, lat, lng, access_token, refresh_token):
         return None
 
 def get_trip_details_cart(trip_id, shipment_id, access_token, refresh_token):
-    """Fetches cart details to extract Order IDs for delivery."""
     url = f"{LOGISTICS_BASE_URL}/trip-details-cart/{trip_id}/{shipment_id}"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -121,6 +130,7 @@ st.set_page_config(page_title="Rider Dashboard", layout="centered")
 if 'step' not in st.session_state: st.session_state.step = 'login'
 if 'auth_tokens' not in st.session_state: st.session_state.auth_tokens = {}
 if 'trip_data' not in st.session_state: st.session_state.trip_data = None
+if 'all_shipments' not in st.session_state: st.session_state.all_shipments = []
 
 # --- STEP 1: LOGIN ---
 if st.session_state.step == 'login':
@@ -169,173 +179,162 @@ elif st.session_state.step == 'dashboard':
             st.rerun()
 
     # --- TOP CONTROL BAR ---
-    col_refresh, col_status = st.columns([1, 2])
-    
-    with col_refresh:
-        # Refresh Button
-        if st.button("🔄 Fetch Pending Orders", type="primary", use_container_width=True):
-            with st.spinner("Refreshing..."):
-                st.session_state.trip_data = None # Clear old data
-                tokens = st.session_state.auth_tokens
-                resp = get_assigned_trip(tokens['access'], tokens['refresh'])
-                if resp and resp.status_code == 200:
-                    st.session_state.trip_data = resp.json().get("data", {})
-                    st.toast("Orders Refreshed!", icon="✅")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Failed to fetch trip.")
+    if st.button("🔄 Fetch Pending Orders", type="primary", use_container_width=True):
+        st.session_state.trip_data = None # Clear trip data to force refresh
+        st.session_state.all_shipments = [] # Clear list
+        st.rerun()
 
-    # Auto-fetch logic: If no trip data is loaded, fetch it automatically
+    # --- DATA FETCHING LOGIC ---
     if st.session_state.trip_data is None:
-        with st.spinner("Loading assigned orders..."):
+        with st.spinner("Loading Trip & Orders..."):
             tokens = st.session_state.auth_tokens
-            resp = get_assigned_trip(tokens['access'], tokens['refresh'])
-            if resp and resp.status_code == 200:
-                st.session_state.trip_data = resp.json().get("data", {})
+            
+            # 1. Get Assigned Trip to get Trip ID
+            trip_resp = get_assigned_trip(tokens['access'], tokens['refresh'])
+            
+            if trip_resp and trip_resp.status_code == 200:
+                trip_data = trip_resp.json().get("data", {})
+                st.session_state.trip_data = trip_data
+                trip_id = trip_data.get('tripId')
+                next_shipment_id = trip_data.get('nextShipmentId')
+                
+                if trip_id:
+                    # 2. Attempt to fetch ALL shipments using just Trip ID
+                    # We pass None for shipment_id to try the trip-level endpoint
+                    full_resp = get_shipment_details(trip_id, None, tokens['access'], tokens['refresh'])
+                    
+                    if full_resp and full_resp.status_code == 200:
+                         # API supported fetching list!
+                         full_data = full_resp.json().get("data", {})
+                         st.session_state.all_shipments = full_data.get("shipments", [])
+                    else:
+                        # Fallback: API is strict, only allows specific shipment ID
+                        if next_shipment_id:
+                            single_resp = get_shipment_details(trip_id, next_shipment_id, tokens['access'], tokens['refresh'])
+                            if single_resp and single_resp.status_code == 200:
+                                single_data = single_resp.json().get("data", {})
+                                st.session_state.all_shipments = single_data.get("shipments", [])
+                
                 st.rerun()
             else:
-                st.error("Could not fetch assigned trip automatically.")
+                st.error("Could not fetch assigned trip details.")
 
     st.divider()
 
-    # --- DISPLAY ORDERS ---
-    if st.session_state.trip_data:
-        td = st.session_state.trip_data
+    # --- RENDER LIST ---
+    shipments_list = st.session_state.all_shipments
+    trip_data = st.session_state.trip_data
+    
+    if shipments_list and trip_data:
+        st.subheader(f"📦 Orders ({len(shipments_list)})")
+        trip_id = trip_data.get('tripId')
         
-        if td.get('isNextShipmentAvailable'):
-            trip_id = td.get('tripId')
-            shipment_id = td.get('nextShipmentId')
+        # LOOP THROUGH ALL ORDERS
+        for idx, shipment in enumerate(shipments_list):
+            current_shipment_id = shipment.get("shipment_id")
             
-            # Fetch specific details for the trip
-            tokens = st.session_state.auth_tokens
-            # Using st.cache_data logic loosely or just fetching directly. 
-            # For simplicity in this app, we fetch directly to ensure realtime status.
-            ship_resp = get_shipment_details(trip_id, shipment_id, tokens['access'], tokens['refresh'])
-            
-            if ship_resp and ship_resp.status_code == 200:
-                full_data = ship_resp.json().get("data", {})
-                shipments_list = full_data.get("shipments", [])
+            # Card Container
+            with st.container(border=True):
+                # Header
+                h1, h2 = st.columns([3, 1])
+                with h1:
+                    st.markdown(f"**Order #{idx + 1}**")
+                    st.write(f"👤 **{shipment.get('customer_name', 'Unknown')}**")
+                with h2:
+                    status = shipment.get('status', 'Pending')
+                    if status.lower() == 'delivered':
+                        st.success(status)
+                    else:
+                        st.info(status)
                 
-                if shipments_list:
-                    st.subheader(f"📦 Pending Shipments: {len(shipments_list)}")
-                    
-                    # Iterate through all shipments in the list
-                    for idx, shipment in enumerate(shipments_list):
-                        current_shipment_id = shipment.get("shipment_id")
-                        
-                        # Create a card-like container for each shipment
-                        with st.container(border=True):
-                            # Header with status
-                            h1, h2 = st.columns([3, 1])
-                            with h1:
-                                st.markdown(f"**#{idx + 1} - {shipment.get('customer_name', 'Unknown')}**")
-                            with h2:
-                                st.caption(f"{shipment.get('status', 'Pending')}")
+                # Details
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    st.write(f"📞 {shipment.get('customer_number', 'N/A')}")
+                    st.caption(f"🏠 {shipment.get('customer_address', 'N/A')}")
+                
+                with col2:
+                    cust_lat = shipment.get("customer_latitude")
+                    cust_lng = shipment.get("customer_longitude")
+                    if cust_lat and cust_lng:
+                        map_url = f"https://www.google.com/maps/search/?api=1&query={cust_lat},{cust_lng}"
+                        st.link_button("🗺️ Map", map_url, use_container_width=True)
+                
+                # Payment
+                st.write(f"💰 **COD: ₹ {shipment.get('cod_amount', 0)}** | Mode: {shipment.get('mode_of_payment')}")
+
+                # Items Accordion
+                with st.expander("🛒 View Items"):
+                    skus = shipment.get("skus", [])
+                    for item in skus:
+                        ic1, ic2 = st.columns([1, 4])
+                        with ic1:
+                            if item.get("image_link"): st.image(item.get("image_link"), width=50)
+                        with ic2:
+                            st.write(f"{item.get('name')} (Qty: {item.get('total_quantity')})")
+
+                # --- INDIVIDUAL DELIVERY BUTTON ---
+                st.write("---")
+                btn_key = f"btn_deliver_{current_shipment_id}"
+                
+                # Only show button if not delivered (simple check based on status text)
+                if str(shipment.get('status')).lower() not in ['delivered', 'completed']:
+                    if st.button(f"⚡ Complete Order #{current_shipment_id}", key=btn_key, type="primary", use_container_width=True):
+                        if cust_lat and cust_lng:
+                            # START PROCESS
+                            tokens = st.session_state.auth_tokens
+                            p_bar = st.progress(0)
+                            status_txt = st.empty()
                             
-                            # 1. Customer & Location
-                            col1, col2 = st.columns([2, 1])
-                            with col1:
-                                st.write(f"📞 {shipment.get('customer_number', 'N/A')}")
-                                st.write(f"🏠 {shipment.get('customer_address', 'N/A')}")
-                            
-                            with col2:
-                                cust_lat = shipment.get("customer_latitude")
-                                cust_lng = shipment.get("customer_longitude")
+                            try:
+                                # 1. Arrive
+                                status_txt.write("📍 Arriving...")
+                                p_bar.progress(30)
+                                mark_arrived_api(current_shipment_id, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
                                 
-                                if cust_lat and cust_lng:
-                                    map_url = f"https://www.google.com/maps/search/?api=1&query={cust_lat},{cust_lng}"
-                                    st.link_button("🗺️ Map", map_url, use_container_width=True)
-                                else:
-                                    st.warning("No GPS")
-                            
-                            # 2. Payment Info
-                            st.info(f"**Payment:** {shipment.get('mode_of_payment')} | **COD:** ₹ {shipment.get('cod_amount', 0)}")
-
-                            # 3. Items (SKUs)
-                            with st.expander("🛒 View Items"):
-                                skus = shipment.get("skus", [])
-                                if skus:
-                                    for item in skus:
-                                        ic1, ic2 = st.columns([1, 4])
-                                        with ic1:
-                                            img_link = item.get("image_link")
-                                            if img_link:
-                                                st.image(img_link, width=60)
-                                        with ic2:
-                                            st.write(f"**{item.get('name')}**")
-                                            st.write(f"Qty: {item.get('total_quantity')}")
-                                else:
-                                    st.write("No items details.")
-
-                            # 4. ONE CLICK ACTION
-                            st.write("---")
-                            # Unique key for button using shipment_id to ensure every order has its own button
-                            if st.button(f"⚡ Complete Delivery (Order #{current_shipment_id})", type="primary", use_container_width=True, key=f"btn_{current_shipment_id}"):
-                                if cust_lat and cust_lng:
-                                    progress_bar = st.progress(0)
-                                    status_text = st.empty()
+                                # 2. Get Order IDs
+                                status_txt.write("📦 Fetching Cart...")
+                                p_bar.progress(60)
+                                cart_resp = get_trip_details_cart(trip_id, current_shipment_id, tokens['access'], tokens['refresh'])
+                                
+                                order_ids = []
+                                if cart_resp and cart_resp.status_code == 200:
+                                    c_data = cart_resp.json().get("data", [])
+                                    for c in c_data:
+                                        for d in c.get("cartwise_order_details", []):
+                                            for o in d.get("orders_list", []):
+                                                order_ids.append(o.get("order_id"))
+                                
+                                if order_ids:
+                                    # 3. Deliver
+                                    status_txt.write("✅ Delivering...")
+                                    p_bar.progress(80)
+                                    del_resp = mark_delivered_api(
+                                        current_shipment_id, order_ids, shipment.get('cod_amount', 0),
+                                        cust_lat, cust_lng, tokens['access'], tokens['refresh']
+                                    )
                                     
-                                    try:
-                                        # STEP 1: Mark Arrived
-                                        status_text.write("📍 Marking Arrived...")
-                                        progress_bar.progress(25)
-                                        
-                                        arrived_resp = mark_arrived_api(
-                                            current_shipment_id, cust_lat, cust_lng, 
-                                            tokens['access'], tokens['refresh']
-                                        )
-                                        
-                                        if arrived_resp and arrived_resp.status_code == 200:
-                                            # STEP 2: Fetch Order IDs
-                                            status_text.write("📦 Fetching Order Details...")
-                                            progress_bar.progress(50)
-                                            
-                                            cart_resp = get_trip_details_cart(trip_id, current_shipment_id, tokens['access'], tokens['refresh'])
-                                            
-                                            if cart_resp and cart_resp.status_code == 200:
-                                                cart_data = cart_resp.json().get("data", [])
-                                                order_ids = []
-                                                for cart_item in cart_data:
-                                                    for detail in cart_item.get("cartwise_order_details", []):
-                                                        for order in detail.get("orders_list", []):
-                                                            order_ids.append(order.get("order_id"))
-                                                
-                                                if order_ids:
-                                                    # STEP 3: Mark Delivered
-                                                    status_text.write("✅ Processing Payment & Delivery...")
-                                                    progress_bar.progress(75)
-                                                    
-                                                    del_resp = mark_delivered_api(
-                                                        current_shipment_id, order_ids, shipment.get('cod_amount', 0),
-                                                        cust_lat, cust_lng,
-                                                        tokens['access'], tokens['refresh']
-                                                    )
-                                                    
-                                                    if del_resp and del_resp.status_code == 200:
-                                                        progress_bar.progress(100)
-                                                        status_text.success("🎉 Order Completed Successfully!")
-                                                        st.balloons()
-                                                        time.sleep(2)
-                                                        st.session_state.trip_data = None # Force refresh next load
-                                                        st.rerun()
-                                                    else:
-                                                        status_text.error(f"Delivery Failed. Status: {del_resp.status_code}")
-                                                        if del_resp: st.write(del_resp.text)
-                                                else:
-                                                    status_text.error("No Order IDs found. Cannot deliver.")
-                                            else:
-                                                status_text.error("Failed to fetch cart details.")
-                                        else:
-                                            status_text.error(f"Failed to Mark Arrived. Status: {arrived_resp.status_code}")
-                                    except Exception as e:
-                                        status_text.error(f"An error occurred: {e}")
+                                    if del_resp and del_resp.status_code == 200:
+                                        p_bar.progress(100)
+                                        status_txt.success("Done!")
+                                        st.balloons()
+                                        time.sleep(1)
+                                        # Force refresh list
+                                        st.session_state.trip_data = None
+                                        st.rerun()
+                                    else:
+                                        status_txt.error("Delivery Failed")
                                 else:
-                                    st.error("GPS Coordinates missing for this customer.")
-                            
+                                    status_txt.error("No Orders found")
+                            except Exception as e:
+                                st.error(f"Error: {e}")
+                        else:
+                            st.error("No GPS coordinates")
                 else:
-                    st.warning("No shipment data found in list.")
-            else:
-                st.error("Failed to load shipment details.")
+                    st.success("✅ Order Completed")
+
+    else:
+        if st.session_state.trip_data:
+            st.info("No shipments found in this trip.")
         else:
-            st.info("No active shipments available. Enjoy your break! ☕")
+            st.info("No trip data loaded. Click Refresh.")
