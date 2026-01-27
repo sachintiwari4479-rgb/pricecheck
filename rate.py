@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import time
+import json
 
 # --- Configuration ---
 AUTH_BASE_URL = "https://services.dealshare.in/scmuserservice/api/v1/auth"
@@ -13,15 +14,76 @@ BASE_HEADERS = {
     "app-type": "SCM_RIDER_APP",
     "device-id": "62adca42-92bd-4bca-852b-c23792ad139e", 
     "app-version": "1.0.0",
-    "content-type": "application/json",
+    "content-type": "application/json; charset=UTF-8",
     "accept-encoding": "gzip",
     "user-agent": "okhttp/4.12.0",
     "cache-control": "no-cache"
 }
 
+# --- Mock Data (For Simulation Mode) ---
+class MockResponse:
+    def __init__(self, json_data, status_code=200):
+        self._json = json_data
+        self.status_code = status_code
+        self.text = json.dumps(json_data)
+    def json(self):
+        return self._json
+
+MOCK_TRIP = {
+    "data": {
+        "tripId": 3605207,
+        "status": "Out for Delivery",
+        "nextShipmentId": 802172002257965200,
+        "isNextShipmentAvailable": True,
+        "tripDistance": "3.73 km"
+    }
+}
+
+MOCK_ALL_SHIPMENTS = {
+    "data": {
+        "shipments": [
+            {
+                "shipment_id": 802172002257965200,
+                "customer_name": "Sandeep Singh (Mock)",
+                "customer_number": "9999999999",
+                "customer_address": "Mock Address 1, Jaipur",
+                "customer_latitude": "26.873780",
+                "customer_longitude": "75.687974",
+                "mode_of_payment": "COD",
+                "status": "out_for_delivery",
+                "cod_amount": 168.0,
+                "skus": [{"name": "Ketchup", "total_quantity": 2, "image_link": "https://placehold.co/50"}]
+            },
+            {
+                "shipment_id": 802172002257965201,
+                "customer_name": "Rahul Verma (Mock)",
+                "customer_number": "8888888888",
+                "customer_address": "Mock Address 2, Delhi",
+                "customer_latitude": "28.6139",
+                "customer_longitude": "77.2090",
+                "mode_of_payment": "COD",
+                "status": "pending",
+                "cod_amount": 450.0,
+                "skus": [{"name": "Soap", "total_quantity": 5, "image_link": "https://placehold.co/50"}]
+            }
+        ]
+    }
+}
+
+MOCK_CART = {
+    "data": [{
+        "cartwise_order_details": [{
+            "orders_list": [{"order_id": 101}, {"order_id": 102}]
+        }]
+    }]
+}
+
 # --- API Functions ---
 
 def send_otp_api(mobile_number):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse({"message": "OTP Sent (Mock)", "status": True})
+
     url = f"{AUTH_BASE_URL}/login"
     payload = {
         "hashCode": "abc123",
@@ -35,6 +97,16 @@ def send_otp_api(mobile_number):
         return None
 
 def verify_otp_api(mobile_number, otp):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse({
+            "data": {
+                "accessToken": "mock_access_token",
+                "refreshToken": "mock_refresh_token",
+                "userId": 12345
+            },
+            "status": True
+        })
+
     url = f"{AUTH_BASE_URL}/verify-otp"
     payload = {"mobileNumber": mobile_number, "otp": otp}
     try:
@@ -44,6 +116,9 @@ def verify_otp_api(mobile_number, otp):
         return None
 
 def get_assigned_trip(access_token, refresh_token):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse(MOCK_TRIP)
+
     url = f"{LOGISTICS_BASE_URL}/assigned-trip"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -59,6 +134,9 @@ def get_shipment_details(trip_id, shipment_id, access_token, refresh_token):
     Fetches shipment details. 
     If shipment_id is None, it tries to fetch ALL shipments for the trip (if API supports it).
     """
+    if st.session_state.get('use_mock_api'):
+        return MockResponse(MOCK_ALL_SHIPMENTS)
+
     if shipment_id:
         url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}/{shipment_id}"
     else:
@@ -75,6 +153,9 @@ def get_shipment_details(trip_id, shipment_id, access_token, refresh_token):
         return None
 
 def mark_arrived_api(shipment_id, lat, lng, access_token, refresh_token):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse({"message": "Arrived Marked (Mock)", "status": True})
+
     url = f"{LASTMILE_BASE_URL}/delivery/arrived-at-location/{shipment_id}"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -92,6 +173,9 @@ def mark_arrived_api(shipment_id, lat, lng, access_token, refresh_token):
         return None
 
 def get_trip_details_cart(trip_id, shipment_id, access_token, refresh_token):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse(MOCK_CART)
+
     url = f"{LOGISTICS_BASE_URL}/trip-details-cart/{trip_id}/{shipment_id}"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -103,6 +187,9 @@ def get_trip_details_cart(trip_id, shipment_id, access_token, refresh_token):
         return None
 
 def mark_delivered_api(shipment_id, order_ids, cod_amount, lat, lng, access_token, refresh_token):
+    if st.session_state.get('use_mock_api'):
+        return MockResponse({"message": "Delivered (Mock)", "status": True})
+
     url = f"{LASTMILE_BASE_URL}/cod-payment/cash-payment"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -131,10 +218,29 @@ if 'step' not in st.session_state: st.session_state.step = 'login'
 if 'auth_tokens' not in st.session_state: st.session_state.auth_tokens = {}
 if 'trip_data' not in st.session_state: st.session_state.trip_data = None
 if 'all_shipments' not in st.session_state: st.session_state.all_shipments = []
+if 'use_mock_api' not in st.session_state: st.session_state.use_mock_api = False
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Settings")
+    st.session_state.use_mock_api = st.checkbox(
+        "Enable Simulation Mode", 
+        value=st.session_state.use_mock_api,
+        help="Check this if you are getting Connection Errors. It will use dummy data."
+    )
+    st.divider()
+    if st.session_state.get('mobile'):
+        st.write(f"User: **{st.session_state.mobile}**")
+        if st.button("Logout"):
+            st.session_state.clear()
+            st.rerun()
 
 # --- STEP 1: LOGIN ---
 if st.session_state.step == 'login':
     st.title("ðŸ›µ Rider Login")
+    if st.session_state.use_mock_api:
+        st.warning("⚠️ Simulation Mode Active")
+
     mobile = st.text_input("Mobile Number", max_chars=10)
     if st.button("Send OTP"):
         with st.spinner("Sending..."):
@@ -170,13 +276,8 @@ elif st.session_state.step == 'verify':
 # --- STEP 3: DASHBOARD ---
 elif st.session_state.step == 'dashboard':
     st.title("ðŸ“¦ Rider Dashboard")
-    
-    # Sidebar
-    with st.sidebar:
-        st.write(f"User: **{st.session_state.mobile}**")
-        if st.button("Logout"):
-            st.session_state.clear()
-            st.rerun()
+    if st.session_state.use_mock_api:
+        st.warning("⚠️ Simulation Mode")
 
     # --- TOP CONTROL BAR ---
     if st.button("🔄 Fetch Pending Orders", type="primary", use_container_width=True):
@@ -242,7 +343,7 @@ elif st.session_state.step == 'dashboard':
                     st.write(f"👤 **{shipment.get('customer_name', 'Unknown')}**")
                 with h2:
                     status = shipment.get('status', 'Pending')
-                    if status.lower() == 'delivered':
+                    if str(status).lower() in ['delivered', 'completed']:
                         st.success(status)
                     else:
                         st.info(status)
