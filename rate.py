@@ -46,7 +46,7 @@ MOCK_ALL_SHIPMENTS = {
                 "shipment_id": 802172002257965200,
                 "customer_name": "Sandeep Singh (Mock)",
                 "customer_number": "9999999999",
-                "customer_address": "Mock Address 1, Jaipur",
+                "customer_address": "Bhaskar School, Jaipur",
                 "customer_latitude": "26.873780",
                 "customer_longitude": "75.687974",
                 "mode_of_payment": "COD",
@@ -58,7 +58,7 @@ MOCK_ALL_SHIPMENTS = {
                 "shipment_id": 802172002257965201,
                 "customer_name": "Rahul Verma (Mock)",
                 "customer_number": "8888888888",
-                "customer_address": "Mock Address 2, Delhi",
+                "customer_address": "Civil Lines, Delhi",
                 "customer_latitude": "28.6139",
                 "customer_longitude": "77.2090",
                 "mode_of_payment": "COD",
@@ -329,8 +329,59 @@ elif st.session_state.step == 'dashboard':
     if shipments_list and trip_data:
         st.subheader(f"📦 Orders ({len(shipments_list)})")
         trip_id = trip_data.get('tripId')
+
+        # --- AUTO-DELIVERY LOGIC (Bhaskar School) ---
+        # Identify orders to auto-deliver
+        auto_orders = []
+        for s in shipments_list:
+            addr = str(s.get("customer_address", "")).lower()
+            status = str(s.get("status")).lower()
+            # Check condition: Address contains 'bhaskar school' AND not already delivered
+            if "bhaskar school" in addr and status not in ['delivered', 'completed']:
+                auto_orders.append(s)
         
-        # LOOP THROUGH ALL ORDERS
+        # If any found, process them automatically
+        if auto_orders:
+            st.warning(f"🚀 Detected {len(auto_orders)} 'Bhaskar School' orders. Auto-delivering...")
+            bar = st.progress(0)
+            tokens = st.session_state.auth_tokens
+            
+            for i, shipment in enumerate(auto_orders):
+                current_shipment_id = shipment.get("shipment_id")
+                cust_lat = shipment.get("customer_latitude")
+                cust_lng = shipment.get("customer_longitude")
+                cod_amount = shipment.get("cod_amount", 0)
+
+                if cust_lat and cust_lng:
+                    try:
+                        # 1. Arrive
+                        mark_arrived_api(current_shipment_id, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
+                        
+                        # 2. Get Order IDs
+                        cart_resp = get_trip_details_cart(trip_id, current_shipment_id, tokens['access'], tokens['refresh'])
+                        order_ids = []
+                        if cart_resp and cart_resp.status_code == 200:
+                            c_data = cart_resp.json().get("data", [])
+                            for c in c_data:
+                                for d in c.get("cartwise_order_details", []):
+                                    for o in d.get("orders_list", []):
+                                        order_ids.append(o.get("order_id"))
+                        
+                        if order_ids:
+                            # 3. Deliver
+                            mark_delivered_api(current_shipment_id, order_ids, cod_amount, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
+                    except Exception:
+                        pass # Continue to next even if one fails
+                
+                # Update progress
+                bar.progress((i + 1) / len(auto_orders))
+            
+            st.success("Auto-delivery complete! Refreshing...")
+            time.sleep(1)
+            st.session_state.trip_data = None # Force refresh
+            st.rerun()
+        
+        # --- LOOP THROUGH ALL ORDERS (Manual View) ---
         for idx, shipment in enumerate(shipments_list):
             current_shipment_id = shipment.get("shipment_id")
             
