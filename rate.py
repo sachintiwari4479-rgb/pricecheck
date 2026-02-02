@@ -3,11 +3,13 @@ import requests
 import pandas as pd
 import time
 import json
+import os
 
 # --- Configuration ---
 AUTH_BASE_URL = "https://services.dealshare.in/scmuserservice/api/v1/auth"
 LOGISTICS_BASE_URL = "https://services.dealshare.in/logisticservice/api/v1/trip"
 LASTMILE_BASE_URL = "https://services.dealshare.in/lastmileservice/api/v1"
+ACCOUNTS_FILE = "saved_accounts.json"
 
 # Default headers needed for all requests
 BASE_HEADERS = {
@@ -20,70 +22,26 @@ BASE_HEADERS = {
     "cache-control": "no-cache"
 }
 
-# --- Mock Data (For Simulation Mode) ---
-class MockResponse:
-    def __init__(self, json_data, status_code=200):
-        self._json = json_data
-        self.status_code = status_code
-        self.text = json.dumps(json_data)
-    def json(self):
-        return self._json
+# --- Account Management Functions ---
 
-MOCK_TRIP = {
-    "data": {
-        "tripId": 3605207,
-        "status": "Out for Delivery",
-        "nextShipmentId": 802172002257965200,
-        "isNextShipmentAvailable": True,
-        "tripDistance": "3.73 km"
-    }
-}
+def load_accounts():
+    if os.path.exists(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
-MOCK_ALL_SHIPMENTS = {
-    "data": {
-        "shipments": [
-            {
-                "shipment_id": 802172002257965200,
-                "customer_name": "Sandeep Singh (Mock)",
-                "customer_number": "9999999999",
-                "customer_address": "Bhaskar School, Jaipur",
-                "customer_latitude": "26.873780",
-                "customer_longitude": "75.687974",
-                "mode_of_payment": "COD",
-                "status": "out_for_delivery",
-                "cod_amount": 168.0,
-                "skus": [{"name": "Ketchup", "total_quantity": 2, "image_link": "https://placehold.co/50"}]
-            },
-            {
-                "shipment_id": 802172002257965201,
-                "customer_name": "Rahul Verma (Mock)",
-                "customer_number": "8888888888",
-                "customer_address": "Civil Lines, Delhi",
-                "customer_latitude": "28.6139",
-                "customer_longitude": "77.2090",
-                "mode_of_payment": "COD",
-                "status": "pending",
-                "cod_amount": 450.0,
-                "skus": [{"name": "Soap", "total_quantity": 5, "image_link": "https://placehold.co/50"}]
-            }
-        ]
-    }
-}
-
-MOCK_CART = {
-    "data": [{
-        "cartwise_order_details": [{
-            "orders_list": [{"order_id": 101}, {"order_id": 102}]
-        }]
-    }]
-}
+def save_account(mobile, tokens):
+    accounts = load_accounts()
+    accounts[mobile] = tokens
+    with open(ACCOUNTS_FILE, "w") as f:
+        json.dump(accounts, f, indent=4)
 
 # --- API Functions ---
 
 def send_otp_api(mobile_number):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse({"message": "OTP Sent (Mock)", "status": True})
-
     url = f"{AUTH_BASE_URL}/login"
     payload = {
         "hashCode": "abc123",
@@ -97,16 +55,6 @@ def send_otp_api(mobile_number):
         return None
 
 def verify_otp_api(mobile_number, otp):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse({
-            "data": {
-                "accessToken": "mock_access_token",
-                "refreshToken": "mock_refresh_token",
-                "userId": 12345
-            },
-            "status": True
-        })
-
     url = f"{AUTH_BASE_URL}/verify-otp"
     payload = {"mobileNumber": mobile_number, "otp": otp}
     try:
@@ -116,9 +64,6 @@ def verify_otp_api(mobile_number, otp):
         return None
 
 def get_assigned_trip(access_token, refresh_token):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse(MOCK_TRIP)
-
     url = f"{LOGISTICS_BASE_URL}/assigned-trip"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -132,15 +77,11 @@ def get_assigned_trip(access_token, refresh_token):
 def get_shipment_details(trip_id, shipment_id, access_token, refresh_token):
     """
     Fetches shipment details. 
-    If shipment_id is None, it tries to fetch ALL shipments for the trip (if API supports it).
+    If shipment_id is None, it tries to fetch ALL shipments for the trip.
     """
-    if st.session_state.get('use_mock_api'):
-        return MockResponse(MOCK_ALL_SHIPMENTS)
-
     if shipment_id:
         url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}/{shipment_id}"
     else:
-        # Try fetching full trip details without specific shipment ID
         url = f"{LOGISTICS_BASE_URL}/trip-shipment-details/{trip_id}"
         
     headers = BASE_HEADERS.copy()
@@ -153,9 +94,6 @@ def get_shipment_details(trip_id, shipment_id, access_token, refresh_token):
         return None
 
 def mark_arrived_api(shipment_id, lat, lng, access_token, refresh_token):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse({"message": "Arrived Marked (Mock)", "status": True})
-
     url = f"{LASTMILE_BASE_URL}/delivery/arrived-at-location/{shipment_id}"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -173,9 +111,6 @@ def mark_arrived_api(shipment_id, lat, lng, access_token, refresh_token):
         return None
 
 def get_trip_details_cart(trip_id, shipment_id, access_token, refresh_token):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse(MOCK_CART)
-
     url = f"{LOGISTICS_BASE_URL}/trip-details-cart/{trip_id}/{shipment_id}"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -187,9 +122,6 @@ def get_trip_details_cart(trip_id, shipment_id, access_token, refresh_token):
         return None
 
 def mark_delivered_api(shipment_id, order_ids, cod_amount, lat, lng, access_token, refresh_token):
-    if st.session_state.get('use_mock_api'):
-        return MockResponse({"message": "Delivered (Mock)", "status": True})
-
     url = f"{LASTMILE_BASE_URL}/cod-payment/cash-payment"
     headers = BASE_HEADERS.copy()
     headers["authorization-access"] = access_token
@@ -218,40 +150,57 @@ if 'step' not in st.session_state: st.session_state.step = 'login'
 if 'auth_tokens' not in st.session_state: st.session_state.auth_tokens = {}
 if 'trip_data' not in st.session_state: st.session_state.trip_data = None
 if 'all_shipments' not in st.session_state: st.session_state.all_shipments = []
-if 'use_mock_api' not in st.session_state: st.session_state.use_mock_api = False
-
-# Sidebar
-with st.sidebar:
-    st.header("⚙️ Settings")
-    st.session_state.use_mock_api = st.checkbox(
-        "Enable Simulation Mode", 
-        value=st.session_state.use_mock_api,
-        help="Check this if you are getting Connection Errors. It will use dummy data."
-    )
-    st.divider()
-    if st.session_state.get('mobile'):
-        st.write(f"User: **{st.session_state.mobile}**")
-        if st.button("Logout"):
-            st.session_state.clear()
-            st.rerun()
+if 'mobile' not in st.session_state: st.session_state.mobile = ""
 
 # --- STEP 1: LOGIN ---
 if st.session_state.step == 'login':
     st.title("ðŸ›µ Rider Login")
-    if st.session_state.use_mock_api:
-        st.warning("⚠️ Simulation Mode Active")
+    
+    saved_accounts = load_accounts()
+    saved_numbers = list(saved_accounts.keys())
+    
+    use_saved = False
+    selected_account = None
 
-    mobile = st.text_input("Mobile Number", max_chars=10)
-    if st.button("Send OTP"):
-        with st.spinner("Sending..."):
-            resp = send_otp_api(mobile)
-            if resp and resp.status_code == 200:
-                st.session_state.mobile = mobile
-                st.session_state.step = 'verify'
-                st.success("OTP Sent!")
-                st.rerun()
+    if saved_numbers:
+        st.subheader("Saved Accounts")
+        selected_num = st.selectbox("Select stored number:", ["-- New Number --"] + saved_numbers)
+        
+        if selected_num != "-- New Number --":
+            use_saved = True
+            selected_account = saved_accounts[selected_num]
+            if st.button(f"🚀 Auto-Login as {selected_num}", type="primary"):
+                with st.spinner("Attempting Auto-Login..."):
+                    # Test token validity by fetching trip
+                    tokens = selected_account
+                    resp = get_assigned_trip(tokens['access'], tokens['refresh'])
+                    
+                    if resp and resp.status_code in [200, 404]: # 404 might mean no trip but token valid
+                        st.session_state.auth_tokens = tokens
+                        st.session_state.mobile = selected_num
+                        st.session_state.step = 'dashboard'
+                        st.success("Auto-Login Successful!")
+                        st.rerun()
+                    else:
+                        st.error("Session Expired. Please login with OTP.")
+                        use_saved = False # Fallback to OTP
+
+    if not use_saved:
+        st.subheader("New Login")
+        mobile = st.text_input("Mobile Number", max_chars=10, value=st.session_state.mobile)
+        if st.button("Send OTP"):
+            if len(mobile) == 10:
+                with st.spinner("Sending..."):
+                    resp = send_otp_api(mobile)
+                    if resp and resp.status_code == 200:
+                        st.session_state.mobile = mobile
+                        st.session_state.step = 'verify'
+                        st.success("OTP Sent!")
+                        st.rerun()
+                    else:
+                        st.error(f"Failed to send OTP: {resp.status_code if resp else 'Err'}")
             else:
-                st.error(f"Failed to send OTP: {resp.status_code if resp else 'Err'}")
+                st.warning("Enter valid 10-digit number")
 
 # --- STEP 2: VERIFY ---
 elif st.session_state.step == 'verify':
@@ -263,12 +212,16 @@ elif st.session_state.step == 'verify':
             resp = verify_otp_api(st.session_state.mobile, otp)
             if resp and resp.status_code == 200:
                 data = resp.json().get("data", {})
-                st.session_state.auth_tokens = {
+                tokens = {
                     "access": data.get("accessToken"),
                     "refresh": data.get("refreshToken")
                 }
+                # SAVE ACCOUNT
+                save_account(st.session_state.mobile, tokens)
+                
+                st.session_state.auth_tokens = tokens
                 st.session_state.step = 'dashboard'
-                st.success("Logged In!")
+                st.success("Logged In & Saved!")
                 st.rerun()
             else:
                 st.error("Invalid OTP")
@@ -276,21 +229,22 @@ elif st.session_state.step == 'verify':
 # --- STEP 3: DASHBOARD ---
 elif st.session_state.step == 'dashboard':
     st.title("ðŸ“¦ Rider Dashboard")
-    if st.session_state.use_mock_api:
-        st.warning("⚠️ Simulation Mode")
+    
+    with st.sidebar:
+        st.write(f"User: **{st.session_state.mobile}**")
+        if st.button("Logout"):
+            st.session_state.clear()
+            st.rerun()
 
-    # --- TOP CONTROL BAR ---
     if st.button("🔄 Fetch Pending Orders", type="primary", use_container_width=True):
-        st.session_state.trip_data = None # Clear trip data to force refresh
-        st.session_state.all_shipments = [] # Clear list
+        st.session_state.trip_data = None 
+        st.session_state.all_shipments = []
         st.rerun()
 
-    # --- DATA FETCHING LOGIC ---
+    # --- DATA FETCHING ---
     if st.session_state.trip_data is None:
         with st.spinner("Loading Trip & Orders..."):
             tokens = st.session_state.auth_tokens
-            
-            # 1. Get Assigned Trip to get Trip ID
             trip_resp = get_assigned_trip(tokens['access'], tokens['refresh'])
             
             if trip_resp and trip_resp.status_code == 200:
@@ -300,51 +254,63 @@ elif st.session_state.step == 'dashboard':
                 next_shipment_id = trip_data.get('nextShipmentId')
                 
                 if trip_id:
-                    # 2. Attempt to fetch ALL shipments using just Trip ID
-                    # We pass None for shipment_id to try the trip-level endpoint
                     full_resp = get_shipment_details(trip_id, None, tokens['access'], tokens['refresh'])
-                    
                     if full_resp and full_resp.status_code == 200:
-                         # API supported fetching list!
                          full_data = full_resp.json().get("data", {})
                          st.session_state.all_shipments = full_data.get("shipments", [])
                     else:
-                        # Fallback: API is strict, only allows specific shipment ID
+                        # Fallback
                         if next_shipment_id:
                             single_resp = get_shipment_details(trip_id, next_shipment_id, tokens['access'], tokens['refresh'])
                             if single_resp and single_resp.status_code == 200:
                                 single_data = single_resp.json().get("data", {})
                                 st.session_state.all_shipments = single_data.get("shipments", [])
-                
                 st.rerun()
             else:
                 st.error("Could not fetch assigned trip details.")
 
-    st.divider()
-
-    # --- RENDER LIST ---
+    # --- STATS CALCULATION ---
     shipments_list = st.session_state.all_shipments
     trip_data = st.session_state.trip_data
-    
-    if shipments_list and trip_data:
-        st.subheader(f"📦 Orders ({len(shipments_list)})")
-        trip_id = trip_data.get('tripId')
+
+    if shipments_list:
+        total_cod_expected = 0
+        total_cod_collected = 0
+        total_items_qty = 0
+        
+        for s in shipments_list:
+            cod = float(s.get('cod_amount', 0))
+            status = str(s.get('status', '')).lower()
+            
+            total_cod_expected += cod
+            if status in ['delivered', 'completed']:
+                total_cod_collected += cod
+            
+            skus = s.get('skus', [])
+            for item in skus:
+                total_items_qty += int(item.get('total_quantity', 0))
+
+        # --- DISPLAY SUMMARY ---
+        st.markdown("### 📊 Trip Summary")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Collect Target", f"₹{total_cod_expected:,.0f}")
+        m2.metric("Cash Collected", f"₹{total_cod_collected:,.0f}")
+        m3.metric("Total Items", f"{total_items_qty}")
+        st.divider()
 
         # --- AUTO-DELIVERY LOGIC (Bhaskar School) ---
-        # Identify orders to auto-deliver
         auto_orders = []
         for s in shipments_list:
             addr = str(s.get("customer_address", "")).lower()
             status = str(s.get("status")).lower()
-            # Check condition: Address contains 'bhaskar school' AND not already delivered
             if "bhaskar school" in addr and status not in ['delivered', 'completed']:
                 auto_orders.append(s)
         
-        # If any found, process them automatically
         if auto_orders:
             st.warning(f"🚀 Detected {len(auto_orders)} 'Bhaskar School' orders. Auto-delivering...")
             bar = st.progress(0)
             tokens = st.session_state.auth_tokens
+            trip_id = trip_data.get('tripId')
             
             for i, shipment in enumerate(auto_orders):
                 current_shipment_id = shipment.get("shipment_id")
@@ -354,10 +320,7 @@ elif st.session_state.step == 'dashboard':
 
                 if cust_lat and cust_lng:
                     try:
-                        # 1. Arrive
                         mark_arrived_api(current_shipment_id, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
-                        
-                        # 2. Get Order IDs
                         cart_resp = get_trip_details_cart(trip_id, current_shipment_id, tokens['access'], tokens['refresh'])
                         order_ids = []
                         if cart_resp and cart_resp.status_code == 200:
@@ -366,28 +329,23 @@ elif st.session_state.step == 'dashboard':
                                 for d in c.get("cartwise_order_details", []):
                                     for o in d.get("orders_list", []):
                                         order_ids.append(o.get("order_id"))
-                        
                         if order_ids:
-                            # 3. Deliver
                             mark_delivered_api(current_shipment_id, order_ids, cod_amount, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
-                    except Exception:
-                        pass # Continue to next even if one fails
-                
-                # Update progress
+                    except: pass
                 bar.progress((i + 1) / len(auto_orders))
             
-            st.success("Auto-delivery complete! Refreshing...")
+            st.success("Auto-delivery complete!")
             time.sleep(1)
-            st.session_state.trip_data = None # Force refresh
+            st.session_state.trip_data = None
             st.rerun()
         
-        # --- LOOP THROUGH ALL ORDERS (Manual View) ---
+        # --- ORDER LIST ---
+        st.subheader(f"📦 Orders List")
+        trip_id = trip_data.get('tripId')
+        
         for idx, shipment in enumerate(shipments_list):
             current_shipment_id = shipment.get("shipment_id")
-            
-            # Card Container
             with st.container(border=True):
-                # Header
                 h1, h2 = st.columns([3, 1])
                 with h1:
                     st.markdown(f"**Order #{idx + 1}**")
@@ -399,7 +357,6 @@ elif st.session_state.step == 'dashboard':
                     else:
                         st.info(status)
                 
-                # Details
                 col1, col2 = st.columns([2, 1])
                 with col1:
                     st.write(f"📞 {shipment.get('customer_number', 'N/A')}")
@@ -412,10 +369,8 @@ elif st.session_state.step == 'dashboard':
                         map_url = f"https://www.google.com/maps/search/?api=1&query={cust_lat},{cust_lng}"
                         st.link_button("🗺️ Map", map_url, use_container_width=True)
                 
-                # Payment
                 st.write(f"💰 **COD: ₹ {shipment.get('cod_amount', 0)}** | Mode: {shipment.get('mode_of_payment')}")
 
-                # Items Accordion
                 with st.expander("🛒 View Items"):
                     skus = shipment.get("skus", [])
                     for item in skus:
@@ -425,30 +380,23 @@ elif st.session_state.step == 'dashboard':
                         with ic2:
                             st.write(f"{item.get('name')} (Qty: {item.get('total_quantity')})")
 
-                # --- INDIVIDUAL DELIVERY BUTTON ---
                 st.write("---")
                 btn_key = f"btn_deliver_{current_shipment_id}"
                 
-                # Only show button if not delivered (simple check based on status text)
                 if str(shipment.get('status')).lower() not in ['delivered', 'completed']:
                     if st.button(f"⚡ Complete Order #{current_shipment_id}", key=btn_key, type="primary", use_container_width=True):
                         if cust_lat and cust_lng:
-                            # START PROCESS
                             tokens = st.session_state.auth_tokens
                             p_bar = st.progress(0)
                             status_txt = st.empty()
-                            
                             try:
-                                # 1. Arrive
                                 status_txt.write("📍 Arriving...")
                                 p_bar.progress(30)
                                 mark_arrived_api(current_shipment_id, cust_lat, cust_lng, tokens['access'], tokens['refresh'])
                                 
-                                # 2. Get Order IDs
                                 status_txt.write("📦 Fetching Cart...")
                                 p_bar.progress(60)
                                 cart_resp = get_trip_details_cart(trip_id, current_shipment_id, tokens['access'], tokens['refresh'])
-                                
                                 order_ids = []
                                 if cart_resp and cart_resp.status_code == 200:
                                     c_data = cart_resp.json().get("data", [])
@@ -458,20 +406,17 @@ elif st.session_state.step == 'dashboard':
                                                 order_ids.append(o.get("order_id"))
                                 
                                 if order_ids:
-                                    # 3. Deliver
                                     status_txt.write("✅ Delivering...")
                                     p_bar.progress(80)
                                     del_resp = mark_delivered_api(
                                         current_shipment_id, order_ids, shipment.get('cod_amount', 0),
                                         cust_lat, cust_lng, tokens['access'], tokens['refresh']
                                     )
-                                    
                                     if del_resp and del_resp.status_code == 200:
                                         p_bar.progress(100)
                                         status_txt.success("Done!")
                                         st.balloons()
                                         time.sleep(1)
-                                        # Force refresh list
                                         st.session_state.trip_data = None
                                         st.rerun()
                                     else:
@@ -484,9 +429,5 @@ elif st.session_state.step == 'dashboard':
                             st.error("No GPS coordinates")
                 else:
                     st.success("✅ Order Completed")
-
     else:
-        if st.session_state.trip_data:
-            st.info("No shipments found in this trip.")
-        else:
-            st.info("No trip data loaded. Click Refresh.")
+        st.info("No active trip data.")
