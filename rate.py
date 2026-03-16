@@ -77,6 +77,27 @@ def api_request(method, url, headers, json_data=None):
         st.error(f"Network Error: {e}")
         return None
 
+# --- UI Components ---
+
+def display_achievement_card(stats):
+    st.markdown(f"""
+        <div class="metric-card">
+            <p style="color: #94a3b8; font-size: 0.8rem; margin: 0;">TODAY'S ACHIEVEMENT</p>
+            <h1 style="margin: 0; color: white;">₹{stats['total_cash']:,.0f}</h1>
+            <div style="display: flex; gap: 20px; margin-top: 15px; border-top: 1px solid #334155; padding-top: 10px;">
+                <div><p style="font-size: 0.7rem; color: #94a3b8; margin:0;">ORDERS</p><b>{stats['total_orders']}</b></div>
+                <div><p style="font-size: 0.7rem; color: #94a3b8; margin:0;">TOTAL ITEMS</p><b>{sum(stats['delivered_items'].values())}</b></div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    if stats["delivered_items"]:
+        with st.expander("📊 View Delivered Items Breakdown", expanded=True if st.session_state.step == 'view_stats' else False):
+            for name, qty in stats["delivered_items"].items():
+                col_n, col_q = st.columns([4, 1])
+                col_n.write(f" {name}")
+                col_q.write(f"**x{qty}**")
+
 # --- App Logic ---
 
 st.set_page_config(page_title="Rider Pro", page_icon="📦", layout="centered")
@@ -112,7 +133,10 @@ if 'mobile' not in st.session_state: st.session_state.mobile = ""
 if st.session_state.step == 'login':
     st.title("🚀 Rider Login")
     mobile = st.text_input("Mobile Number", value=st.session_state.mobile, max_chars=10)
-    if st.button("Send OTP", use_container_width=True, type="primary"):
+    
+    col1, col2 = st.columns(2)
+    
+    if col1.button("Send OTP", use_container_width=True, type="primary"):
         if len(mobile) == 10:
             resp = api_request("POST", f"{AUTH_BASE_URL}/login", BASE_HEADERS, 
                                {"hashCode": "abc123", "mobileNumber": mobile, "provider": "MOBILE_OTP"})
@@ -122,6 +146,20 @@ if st.session_state.step == 'login':
                 st.rerun()
         else:
             st.error("Enter valid 10-digit number")
+            
+    if col2.button("📊 Total Data", use_container_width=True):
+        st.session_state.step = 'view_stats'
+        st.rerun()
+
+# --- VIEW STATS STEP (Public Access) ---
+elif st.session_state.step == 'view_stats':
+    st.title("📈 Daily Summary")
+    stats = get_daily_stats()
+    display_achievement_card(stats)
+    
+    if st.button("⬅️ Back to Login", use_container_width=True):
+        st.session_state.step = 'login'
+        st.rerun()
 
 # --- VERIFY STEP ---
 elif st.session_state.step == 'verify':
@@ -150,24 +188,7 @@ elif st.session_state.step == 'dashboard':
             st.rerun()
 
     # --- TODAY'S ACHIEVEMENT (MAIN PAGE SUMMARY) ---
-    st.markdown(f"""
-        <div class="metric-card">
-            <p style="color: #94a3b8; font-size: 0.8rem; margin: 0;">TODAY'S ACHIEVEMENT</p>
-            <h1 style="margin: 0; color: white;">₹{stats['total_cash']:,.0f}</h1>
-            <div style="display: flex; gap: 20px; margin-top: 15px; border-top: 1px solid #334155; pt: 10px;">
-                <div><p style="font-size: 0.7rem; color: #94a3b8; margin:0;">ORDERS</p><b>{stats['total_orders']}</b></div>
-                <div><p style="font-size: 0.7rem; color: #94a3b8; margin:0;">TOTAL ITEMS</p><b>{sum(stats['delivered_items'].values())}</b></div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # Delivered Items List
-    if stats["delivered_items"]:
-        with st.expander("📊 View Delivered Items Breakdown", expanded=False):
-            for name, qty in stats["delivered_items"].items():
-                col_n, col_q = st.columns([4, 1])
-                col_n.write(f" {name}")
-                col_q.write(f"**x{qty}**")
+    display_achievement_card(stats)
 
     # Fetch Data Section
     headers = BASE_HEADERS.copy()
