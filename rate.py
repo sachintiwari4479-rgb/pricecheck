@@ -46,6 +46,12 @@ def get_daily_stats():
         save_json(STATS_FILE, stats)
     return stats
 
+def reset_daily_stats():
+    today = datetime.now().strftime("%Y-%m-%d")
+    stats = {"date": today, "delivered_items": {}, "total_cash": 0, "total_orders": 0}
+    save_json(STATS_FILE, stats)
+    return stats
+
 def update_daily_stats(shipment):
     stats = get_daily_stats()
     
@@ -157,8 +163,15 @@ elif st.session_state.step == 'view_stats':
     stats = get_daily_stats()
     display_achievement_card(stats)
     
-    if st.button("⬅️ Back to Login", use_container_width=True):
+    col1, col2 = st.columns(2)
+    if col1.button("⬅️ Back", use_container_width=True):
         st.session_state.step = 'login'
+        st.rerun()
+    
+    if col2.button("🗑️ Clear Data", use_container_width=True):
+        reset_daily_stats()
+        st.toast("Today's data has been cleared!")
+        time.sleep(1)
         st.rerun()
 
 # --- VERIFY STEP ---
@@ -183,8 +196,15 @@ elif st.session_state.step == 'dashboard':
     # Sidebar
     with st.sidebar:
         st.write(f"Logged in: **{st.session_state.mobile}**")
-        if st.button("Logout"):
+        if st.button("Logout", use_container_width=True):
             st.session_state.clear()
+            st.rerun()
+        
+        st.divider()
+        if st.button("🗑️ Clear Today's Data", use_container_width=True):
+            reset_daily_stats()
+            st.success("Data cleared!")
+            time.sleep(1)
             st.rerun()
 
     # --- TODAY'S ACHIEVEMENT (MAIN PAGE SUMMARY) ---
